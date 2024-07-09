@@ -1,0 +1,78 @@
+volumes:
+  mongodb_data: { driver: local }
+  traefik: { driver: local }
+
+services:
+  traefik:
+    container_name: traefik-container
+    image: docker.io/traefik:v2.9.8
+    restart: always
+    command:
+     - --api.insecure=true
+     - --api.dashboard=true
+     - --providers.docker=true
+     - --providers.docker.exposedbydefault=false
+     - --entrypoints.web.address=:80
+     - --entrypoints.websecure.address=:443
+     - --certificatesresolvers.le.acme.httpchallenge.entrypoint=web
+     - --certificatesresolvers.le.acme.email=${LETSENCRYPT_EMAIL}
+     - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+    ports:
+      - 80:80
+      - 443:443
+      - 8080:8080
+    volumes:
+      - traefik:/letsencrypt:rw
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik.yml:/traefik.yml
+    networks:
+      - web
+
+  rocketchat:
+    container_name: rocket-container
+    image: registry.rocket.chat/rocketchat/rocket.chat:latest
+    restart: always
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.rocketchat.rule: Host(`${DOMAIN}`)
+      traefik.http.routers.rocketchat.tls: "true"
+      traefik.http.routers.rocketchat.entrypoints: websecure
+      traefik.http.routers.rocketchat.tls.certresolver: le
+    environment:
+      MONGO_URL: "mongodb://mongodb:27017/rocketchat?replicaSet=rs0"
+      MONGO_OPLOG_URL: "mongodb://mongodb:27017/local?replicaSet=rs0"
+      ROOT_URL: ${ROOT_URL:-http://localhost:3000}
+      PORT: ${PORT:-3000}
+      DEPLOY_METHOD: docker
+      DEPLOY_PLATFORM: ${DEPLOY_PLATFORM:-}
+      REG_TOKEN: ${REG_TOKEN:-}
+    depends_on:
+      - mongodb
+    expose:
+      - "3000"
+    ports:
+      - "0.0.0.0:3000:3000"
+    networks:
+      - web
+
+  mongodb:
+    container_name: mongodb-container
+    image: bitnami/mongodb:4.4
+    restart: always
+    volumes:
+      - mongodb_data:/bitnami/mongodb
+    environment:
+      MONGODB_REPLICA_SET_MODE: primary
+      MONGODB_REPLICA_SET_NAME: rs0
+      MONGODB_PORT_NUMBER: 27017
+      MONGODB_INITIAL_PRIMARY_HOST: mongodb
+      MONGODB_INITIAL_PRIMARY_PORT_NUMBER: 27017
+      MONGODB_ADVERTISED_HOSTNAME: mongodb
+      MONGODB_ENABLE_JOURNAL: true
+      ALLOW_EMPTY_PASSWORD: yes
+    networks:
+      - web
+
+networks:
+  web:
+    external: true
